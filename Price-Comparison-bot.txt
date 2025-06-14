@@ -1,0 +1,289 @@
+pip install beautifulsoup4 lxml selenium undetected-chromedriver webdriver-manager
+
+
+
+
+
+from webdriver_manager.chrome import ChromeDriverManager
+
+
+
+
+
+ChromeDriverManager().install()
+
+
+
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+from email.mime.text import MIMEText
+import smtplib
+import traceback
+import time
+from email.mime.multipart import MIMEMultipart
+import re
+
+# === CONFIGURATION === #
+FLIPKART_URL = "https://www.flipkart.com/samsung-s25-ultra-5g-titanium-gray-256-gb/p/itm566994e00dfc0?pid=MOBH8K8U7F5FKSXA&lid=LSTMOBH8K8U7F5FKSXAGU1LLH&marketplace=FLIPKART&sattr[]=color&sattr[]=storage&st=color"
+AMAZON_URL = "https://www.amazon.in/Samsung-Smartphone-Silverblue-Snapdragon-ProVisual/dp/B0DT4N4Z28?th=1"
+RELIANCE_URL = "https://www.reliancedigital.in/product/samsung-galaxy-s25-ultra-5g-256-gb-12-gb-ram-titanium-grey-mobile-phone-m69dyg-8850633?internal_source=search_results"
+EMAIL = "maimunsayed@gmail.com"
+APP_PASSWORD = "bthl zgvd hxdw pgzl"
+TO_EMAIL = "sayedmaimun749@gmail.com"
+PRICE_THRESHOLD = 75000
+
+# === Setup Selenium WebDriver === #
+def setup_driver():
+    CHROMEDRIVER_PATH = r"C:\Users\Administrator\.wdm\drivers\chromedriver\win64\136.0.7103.113\chromedriver-win32\chromedriver.exe"
+    options = Options()
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
+    driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=options)
+    driver.maximize_window()
+    return driver
+
+# === Flipkart Scraper === #
+def get_flipkart_price(driver, url):
+    try:
+        driver.get(url)
+        time.sleep(3)
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "VU-ZEz"))
+        )
+
+        soup = BeautifulSoup(driver.page_source, 'lxml')
+        title_elem = soup.select_one("span.VU-ZEz")
+        price_elem = soup.select_one("div.Nx9bqj.CxhGGd")
+
+        if title_elem and price_elem:
+            title = title_elem.get_text(strip=True)
+            price = float(price_elem.get_text(strip=True).replace("₹", "").replace(",", ""))
+            return title, price
+        else:
+            print("⚠️ Flipkart: Title or price not found.")
+    except Exception as e:
+        print("❌ Flipkart scraping error:")
+        traceback.print_exc()
+
+    return None, None
+
+# === Amazon Scraper === #
+def get_amazon_price(driver, url):
+    try:
+        driver.get(url)
+        time.sleep(5)
+
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+
+        soup = BeautifulSoup(driver.page_source, 'lxml')
+        title_elem = soup.find("span", id="productTitle")
+        whole_elem = soup.select_one("span.a-price-whole")
+        fraction_elem = soup.select_one("span.a-price-fraction")
+
+        if title_elem and whole_elem:
+            title = title_elem.get_text(strip=True)
+            whole = whole_elem.get_text(strip=True).replace(",", "").replace(".", "")
+            fraction = fraction_elem.get_text(strip=True).replace(".", "") if fraction_elem else "00"
+            print(f"DEBUG: whole = '{whole}', fraction = '{fraction}'")
+            price_str = f"{whole}.{fraction}"
+            price = float(price_str)
+            return title, price
+        else:
+            print("⚠️ Amazon: Title or price not found.")
+    except Exception as e:
+        print("❌ Amazon scraping error:")
+        traceback.print_exc()
+
+    return None, None
+
+
+
+def get_reliance_price(driver, url):
+    try:
+        driver.get(url)
+        time.sleep(5)
+
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "product-name"))
+        )
+
+        soup = BeautifulSoup(driver.page_source, 'lxml')
+        title_elem = soup.find("h1", class_="product-name")
+        price_elem = soup.find("div", class_="product-price")
+
+        if title_elem and price_elem:
+            title = title_elem.get_text(strip=True)
+            price_text = price_elem.get_text(strip=True)
+            
+            # Extract numeric price using regex
+            match = re.search(r"[\d,]+", price_text)
+            if match:
+                price = float(match.group(0).replace(",", ""))
+                return title, price
+            else:
+                print("⚠️ Reliance: Price pattern not found.")
+        else:
+            print("⚠️ Reliance: Title or price not found.")
+    except Exception as e:
+        print("❌ Reliance scraping error:")
+        traceback.print_exc()
+
+    return None, None
+
+
+
+
+# === Email Sender === #
+def send_email(subject, body_html):
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL
+    msg["To"] = TO_EMAIL
+
+    html_part = MIMEText(body_html, "html")
+    msg.attach(html_part)
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL, APP_PASSWORD)
+            server.sendmail(EMAIL, TO_EMAIL, msg.as_string())
+            print("✅ Email sent.")
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
+        
+# === Main Logic === #
+def main():
+    driver = setup_driver()
+    try:
+        # Flipkart
+        flip_title, flip_price = get_flipkart_price(driver, FLIPKART_URL)
+        if flip_title and flip_price:
+            print(f"📦 Flipkart: {flip_title} – ₹{flip_price}")
+        else:
+            print("❌ Could not retrieve Flipkart details")
+
+        # Amazon
+        amazon_title, amazon_price = get_amazon_price(driver, AMAZON_URL)
+        if amazon_title and amazon_price:
+            print(f"📦 Amazon: {amazon_title} – ₹{amazon_price}")
+        else:
+            print("❌ Could not retrieve Amazon details")
+
+        # Reliance Digital
+        rel_title, rel_price = get_reliance_price(driver, RELIANCE_URL)
+        if rel_title and rel_price:
+            print(f"📦 Reliance: {rel_title} – ₹{rel_price}")
+        else:
+            print("❌ Could not retrieve Reliance details")
+
+        # 🆚 Compare all available platform prices
+        price_map = {}
+
+        if flip_price:
+            price_map["Flipkart"] = flip_price
+        if amazon_price:
+            price_map["Amazon"] = amazon_price
+        if rel_price:
+            price_map["Reliance"] = rel_price
+
+        if price_map:
+            min_price = min(price_map.values())
+            best_platforms = [platform for platform, price in price_map.items() if price == min_price]
+
+            if len(best_platforms) == 1:
+                better_platform = best_platforms[0]
+            else:
+                better_platform = " & ".join(best_platforms)
+
+            max_price = max(price_map.values())
+            price_difference = max_price - min_price
+        else:
+            better_platform = "Unavailable"
+            price_difference = None
+
+        # 📧 HTML Email Body
+        body_html = f"""
+        <html>
+        <head>
+            <style>
+                table {{
+                    font-family: Arial, sans-serif;
+                    border-collapse: collapse;
+                    width: 100%;
+                }}
+                td, th {{
+                    border: 1px solid #dddddd;
+                    text-align: left;
+                    padding: 8px;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f9f9f9;
+                }}
+                .highlight {{
+                    font-weight: bold;
+                    color: green;
+                }}
+                .price-diff {{
+                    font-weight: bold;
+                    color: #d9534f;
+                }}
+            </style>
+        </head>
+        <body>
+            <h2>🔥 Price Comparison Report</h2>
+            <table>
+                <tr>
+                    <th>Platform</th>
+                    <th>Product</th>
+                    <th>Price</th>
+                    <th>Link</th>
+                </tr>
+                <tr>
+                    <td>Flipkart</td>
+                    <td>{flip_title or 'N/A'}</td>
+                    <td>{f'₹{flip_price}' if flip_price else 'N/A'}</td>
+                    <td><a href="{FLIPKART_URL}">View</a></td>
+                </tr>
+                <tr>
+                    <td>Amazon</td>
+                    <td>{amazon_title or 'N/A'}</td>
+                    <td>{f'₹{amazon_price}' if amazon_price else 'N/A'}</td>
+                    <td><a href="{AMAZON_URL}">View</a></td>
+                </tr>
+                <tr>
+                    <td>Reliance Digital</td>
+                    <td>{rel_title or 'N/A'}</td>
+                    <td>{f'₹{rel_price}' if rel_price else 'N/A'}</td>
+                    <td><a href="{RELIANCE_URL}">View</a></td>
+                </tr>
+            </table>
+        """
+
+        if better_platform != "Unavailable":
+            body_html += f"<p class='highlight'>🏆 Best Deal: {better_platform}</p>"
+
+        if price_difference is not None and price_difference > 0:
+            body_html += f"<p class='price-diff'>💰 You Save: ₹{price_difference:.2f}</p>"
+
+        body_html += "</body></html>"
+
+        # Send the Email
+        send_email("🔥 Price Comparison Report", body_html)
+
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()
